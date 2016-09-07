@@ -12,6 +12,14 @@ then install its requirements:
 $ pip install -r requirements.txt
 ```
 
+If this is your first time setting up, also install the Spacy data models:
+
+```bash
+$ sputnik --name spacy --repository-url http://index.spacy.io install en==1.1.0
+```
+
+Note: model installation downloads approximately 500 mb of data. Don't do this on your cell connection.
+
 ## Usage
 
 First, train the model:
