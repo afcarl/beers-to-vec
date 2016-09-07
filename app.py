@@ -59,7 +59,7 @@ def cli(ctx): pass
 @click.pass_context
 def generate_model(ctx, data_path, model_path):
     # find all input files
-    fns = glob.glob(os.path.join(data_path, 'brewery-[0-9].json'))
+    fns = glob.glob(os.path.join(data_path, '*.json'))
 
     click.echo('Building model')
 
