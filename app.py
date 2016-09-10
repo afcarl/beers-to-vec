@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import glob
+import gzip
 import json
 import os
 import pprint
@@ -18,15 +19,19 @@ def file_comment_collector(filenames):
     for fn in filenames:
         click.echo('Reading comment(s) from {}'.format(fn))
 
-        try:
-            doc = json.load(open(fn, 'r'))
-        except json.JSONDecodeError as exc:
-            click.echo('No dice on scanning {}: {}'
-                       .format(fn, exc))
-            continue
+        with gzip.open(fn, 'rt') as fh:
+            try:
+                doc = json.load(fh)
+            except json.JSONDecodeError as exc:
+                click.echo('No dice on scanning {}: {}'
+                           .format(fn, exc))
+                continue
 
-        for checkin in doc:
-            yield checkin['checkin']['comments']
+            style_token = doc['beer']['style'].replace(' ', '_')
+
+            for checkin in doc:
+                for comment in checkin['checkin']['comments']:
+                    yield '{} {}'.format(style_token, comment)
 
 
 class SentenceGenerator(object):
@@ -59,19 +64,21 @@ def cli(ctx): pass
 @click.pass_context
 def generate_model(ctx, data_path, model_path):
     # find all input files
-    fns = glob.glob(os.path.join(data_path, '*.json'))
+    fns = glob.glob(os.path.join(data_path, '*.json.gz'))
 
-    click.echo('Building model')
+    click.echo('Building model from {} breweries'.format(len(fns)))
 
     nlp = spacy.load('en')
 
+    click.echo('Loaded Spacy EN model')
+
     # build, write model
-    model = gensim.models.Word2Vec(min_count=2, workers=4)
+    model = gensim.models.Word2Vec(min_count=5, workers=4)
     model.build_vocab(SentenceGenerator(nlp, fns))
+    model.init_sims(replace=True)
     model.save(model_path)
 
     click.echo('Model built: {}'.format(model_path))
-
 
 
 @cli.command('show-vocab')
