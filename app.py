@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import csv
 import glob
 import gzip
 import json
@@ -27,26 +28,28 @@ def file_comment_collector(filenames):
                            .format(fn, exc))
                 continue
 
-            style_token = doc['beer']['style'].replace(' ', '_')
-
             for checkin in doc:
-                for comment in checkin['checkin']['comments']:
-                    yield '{} {}'.format(style_token, comment)
+                style_token = checkin['beer']['style'].replace(' ', '_')
+                yield (style_token, checkin['checkin']['comments'])
 
 
 class SentenceGenerator(object):
-    def __init__(self, nlp, filenames):
-        self.nlp = nlp
-        self.sentences = file_comment_collector(filenames)
+    def __init__(self, fh):
+        """Iterates sentences from a CSV file
+
+        Arguments:
+            filename: Path to CSV file of <label, sentence> rows
+        """
+
+        self.sentences = csv.reader(fh)
 
     def __iter__(self):
-        for i, doc in enumerate(self.nlp.pipe(self.sentences,
-                                              batch_size=50,
-                                              n_threads=4)):
-            for sentence in doc.sents:
-                try:
-                    yield [t.text for t in sentence]
-                except Exception as exc:
+        for row in self.sentences:
+            words = [w.strip().lower() for w in row[1].split()]
+
+            try:
+                yield gensim.models.doc2vec.LabeledSentence(words, [row[0]])
+            except Exception as exc:
                     click.echo('Sentence unusable: {}'.format(exc))
 
 
@@ -55,26 +58,55 @@ class SentenceGenerator(object):
 def cli(ctx): pass
 
 
-@cli.command('generate-model')
+@cli.command('generate-sentences')
 @click.option('-i', 'data_path',
               type=click.Path(exists=True, file_okay=False))
-@click.option('-o', 'model_path', type=click.Path(file_okay=True,
-                                                  dir_okay=False,
-                                                  writable=True))
+@click.option('-o', 'output_fh', type=click.File('a'))
 @click.pass_context
-def generate_model(ctx, data_path, model_path):
-    # find all input files
+def generate_sentences(ctx, data_path, output_fh):
     fns = glob.glob(os.path.join(data_path, '*.json.gz'))
-
-    click.echo('Building model from {} breweries'.format(len(fns)))
+    writer = csv.writer(output_fh)
 
     nlp = spacy.load('en')
 
-    click.echo('Loaded Spacy EN model')
+    for token, comment in file_comment_collector(fns):
+        doc = nlp(comment)
 
+        for sentence in doc.sents:
+            words = [
+                t.text for t in sentence
+                if not
+                    t.is_stop
+                    and not t.is_punct
+                    and not t.is_digit
+            ]
+            writer.writerow([token, ' '.join(words).strip()])
+
+
+@cli.command('generate-model')
+@click.option('-i', 'data_path', type=click.File('r'))
+@click.option('-o', 'model_path', type=click.Path(file_okay=True,
+                                                  dir_okay=False,
+                                                  writable=True))
+@click.option('--epochs', 'epochs', type=click.INT, default=10)
+@click.pass_context
+def generate_model(ctx, data_path, model_path, epochs):
     # build, write model
-    model = gensim.models.Word2Vec(min_count=5, workers=4)
-    model.build_vocab(SentenceGenerator(nlp, fns))
+    model = gensim.models.Doc2Vec(min_count=5, workers=4,
+                                  alpha=0.025, min_alpha=0.025)
+
+    click.echo('Building model vocab')
+
+    model.build_vocab(SentenceGenerator(data_path))
+
+    # train model
+    for e in range(epochs):
+        click.echo('Training epoch {}'.format(e + 1))
+        data_path.seek(0)
+        model.train(SentenceGenerator(data_path))
+        model.alpha -= 0.002
+        model.min_alpha = model.alpha
+
     model.init_sims(replace=True)
     model.save(model_path)
 
@@ -106,5 +138,5 @@ def get_similarity(ctx, model_path, term):
 
 
 if __name__ == '__main__':
-    click.echo('Starting app')
+    assert gensim.models.word2vec.FAST_VERSION > -1
     cli(obj={})
